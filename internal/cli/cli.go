@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 
+	"github.com/kaeawc/reprobundle/internal/bundler"
 	"github.com/kaeawc/reprobundle/internal/intake"
 	"github.com/kaeawc/reprobundle/internal/scanner"
 	"github.com/kaeawc/reprobundle/internal/slicer"
@@ -22,7 +23,8 @@ func Run(args []string, version string, stdout, stderr io.Writer) error {
 	showVersion := fs.Bool("version", false, "print version and exit")
 	repo := fs.String("repo", ".", "repository root to slice from")
 	entry := fs.String("entry", "", "entry point: pytest test ID (path::test, path::Class::test)")
-	out := fs.String("out", "", "output directory for the bundle (currently only used for path validation)")
+	out := fs.String("out", "", "output directory for the bundle")
+	dryRun := fs.Bool("dry-run", false, "print the slice without writing the bundle")
 
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -36,10 +38,10 @@ func Run(args []string, version string, stdout, stderr io.Writer) error {
 		return fmt.Errorf("--entry and --out are required")
 	}
 
-	return runSlice(context.Background(), *repo, *entry, *out, stdout)
+	return runSlice(context.Background(), *repo, *entry, *out, *dryRun, stdout)
 }
 
-func runSlice(ctx context.Context, repo, entry, out string, stdout io.Writer) error {
+func runSlice(ctx context.Context, repo, entry, out string, dryRun bool, stdout io.Writer) error {
 	seed, err := intake.ParsePytestID(entry)
 	if err != nil {
 		return fmt.Errorf("parse entry: %w", err)
@@ -49,7 +51,8 @@ func runSlice(ctx context.Context, repo, entry, out string, stdout io.Writer) er
 		return fmt.Errorf("resolve seed: %w", err)
 	}
 
-	resolver := scanner.NewPyResolver(os.DirFS(absRoot))
+	srcFS := os.DirFS(absRoot)
+	resolver := scanner.NewPyResolver(srcFS)
 	set, err := slicer.WalkFiles(ctx, resolver, resolved.File)
 	if err != nil {
 		return fmt.Errorf("walk imports: %w", err)
@@ -65,7 +68,6 @@ func runSlice(ctx context.Context, repo, entry, out string, stdout io.Writer) er
 		fmt.Fprintf(stdout, " [%s]", resolved.Param)
 	}
 	fmt.Fprintln(stdout)
-	fmt.Fprintf(stdout, "out: %s (bundling not yet implemented)\n", out)
 	fmt.Fprintln(stdout)
 
 	fmt.Fprintf(stdout, "files (%d):\n", len(set.Files))
@@ -78,5 +80,16 @@ func runSlice(ctx context.Context, repo, entry, out string, stdout io.Writer) er
 			fmt.Fprintf(stdout, "  %s\n", e)
 		}
 	}
+
+	if dryRun {
+		fmt.Fprintf(stdout, "\ndry-run: skipping bundle write to %s\n", out)
+		return nil
+	}
+
+	bundle := bundler.FromWalk(srcFS, absRoot, resolved, set)
+	if err := bundler.Write(out, bundle); err != nil {
+		return fmt.Errorf("bundle: %w", err)
+	}
+	fmt.Fprintf(stdout, "\nwrote bundle to %s\n", out)
 	return nil
 }
