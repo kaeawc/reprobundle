@@ -8,7 +8,9 @@ import (
 	"context"
 	"fmt"
 	"io/fs"
+	"path"
 	"sort"
+	"strings"
 
 	"github.com/kaeawc/reprobundle/internal/scanner"
 )
@@ -72,6 +74,14 @@ func WalkFiles(ctx context.Context, resolver *scanner.PyResolver, entry string) 
 				if !seen[res.Path] {
 					queue = append(queue, res.Path)
 				}
+				// Python needs every parent package's __init__.py
+				// to import the resolved file at runtime, so the
+				// bundle has to ship them too.
+				for _, init := range parentInits(resolver.FS, res.Path) {
+					if !seen[init] {
+						queue = append(queue, init)
+					}
+				}
 			default:
 				if name := externalName(imp); name != "" {
 					external[name] = true
@@ -118,6 +128,25 @@ func externalName(imp scanner.Import) string {
 	default:
 		return ""
 	}
+}
+
+// parentInits returns the __init__.py files for every directory between
+// the file and the FS root, in root-first order. Files that don't exist
+// (the test directory, the project root) are skipped.
+func parentInits(fsys fs.FS, file string) []string {
+	dir := path.Dir(file)
+	if dir == "." || dir == "/" || dir == "" {
+		return nil
+	}
+	parts := strings.Split(dir, "/")
+	var out []string
+	for i := 1; i <= len(parts); i++ {
+		candidate := path.Join(path.Join(parts[:i]...), "__init__.py")
+		if info, err := fs.Stat(fsys, candidate); err == nil && !info.IsDir() {
+			out = append(out, candidate)
+		}
+	}
+	return out
 }
 
 func keys(m map[string]bool) []string {

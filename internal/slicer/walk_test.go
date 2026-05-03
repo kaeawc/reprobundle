@@ -48,7 +48,25 @@ func TestWalkFilesPackages(t *testing.T) {
 	if err != nil {
 		t.Fatalf("WalkFiles: %v", err)
 	}
-	want := []string{"entry.py", "pkg/sub/__init__.py", "pkg/sub/helper.py"}
+	// pkg/__init__.py is included as a parent __init__ of pkg/sub.
+	want := []string{"entry.py", "pkg/__init__.py", "pkg/sub/__init__.py", "pkg/sub/helper.py"}
+	if !reflect.DeepEqual(got.Files, want) {
+		t.Fatalf("Files = %v, want %v", got.Files, want)
+	}
+}
+
+func TestWalkFilesIncludesParentInits(t *testing.T) {
+	fsys := newFS(map[string]string{
+		"entry.py":              "import pkg.sub.deep\n",
+		"pkg/__init__.py":       "",
+		"pkg/sub/__init__.py":   "",
+		"pkg/sub/deep/__init__.py": "",
+	})
+	got, err := WalkFiles(context.Background(), scanner.NewPyResolver(fsys), "entry.py")
+	if err != nil {
+		t.Fatalf("WalkFiles: %v", err)
+	}
+	want := []string{"entry.py", "pkg/__init__.py", "pkg/sub/__init__.py", "pkg/sub/deep/__init__.py"}
 	if !reflect.DeepEqual(got.Files, want) {
 		t.Fatalf("Files = %v, want %v", got.Files, want)
 	}
@@ -78,7 +96,7 @@ func TestWalkFilesRecordsExternal(t *testing.T) {
 	if err != nil {
 		t.Fatalf("WalkFiles: %v", err)
 	}
-	if !reflect.DeepEqual(got.Files, []string{"entry.py", "mypkg/local.py"}) {
+	if !reflect.DeepEqual(got.Files, []string{"entry.py", "mypkg/__init__.py", "mypkg/local.py"}) {
 		t.Fatalf("Files = %v", got.Files)
 	}
 	if !reflect.DeepEqual(got.External, []string{"os", "requests"}) {
